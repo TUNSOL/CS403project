@@ -1,12 +1,10 @@
 from . import Clock
 
 class LamportClock(Clock):
-    # constructor  
     def __init__(self, id: int):
         self.__id = id
         self.__timestamp = 0
 
-    # getterrss
     @property
     def id(self) -> int:
         return self.__id
@@ -15,10 +13,12 @@ class LamportClock(Clock):
     def timestamp(self) -> int:
         return self.__timestamp
 
-    # if received == None --> local update
-    def update(self, received: int) -> None:
+    def update(self, received: int | None) -> None:
+        if received is None:
+            self.__timestamp += 1
+            return
+
         self.__timestamp = max(self.__timestamp, received) + 1
 
-    
     def __str__(self) -> str:
-        return f"LamportClock(id={self.__id}, timestamp={self.__timestamp})"
+        return str(self.__timestamp)
