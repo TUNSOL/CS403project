@@ -4,15 +4,43 @@ import multiprocessing
 import os
 import pprint
 import re
+import sys
 import threading
 import time
 import uuid
-import zmq
 
-from dotenv import load_dotenv
+try:
+  import zmq
+except ModuleNotFoundError:  # pragma: no cover - depends on local environment
+  zmq = None
 
-from tree_crdt import Replica
-from tree_crdt.payload import MovePayload
+try:
+  from dotenv import load_dotenv
+except ModuleNotFoundError:  # pragma: no cover - depends on local environment
+  def load_dotenv():
+    return False
+
+try:
+  from tree_crdt import Replica
+  from tree_crdt.payload import MovePayload
+except ModuleNotFoundError:  # pragma: no cover - convenient local fallback
+  sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
+  from tree_crdt import Replica
+  from tree_crdt.payload import MovePayload
+
+def _require_zmq():
+  if zmq is None:
+    raise RuntimeError("pyzmq is required to run main.py")
+
+def _send_topic_message(socket, topic, payload):
+  socket.send_multipart([
+    topic.encode("utf-8"),
+    json.dumps(payload).encode("utf-8"),
+  ])
+
+def _receive_topic_message(socket):
+  topic_raw, payload_raw = socket.recv_multipart()
+  return topic_raw.decode("utf-8"), json.loads(payload_raw.decode("utf-8"))
 
 # -----------------------------------------
 
@@ -85,6 +113,92 @@ def get_move_generator(config_name):
 # )
 # The function should not return any value
 # See the PDF for a detailed description of the function
+def listener_thread(
+  replica_obj,
+  zmq_context,
+  shutdown_event,
+  replica_info,
+  num_replicas,
+  hosts,
+  all_replicas_done_event,
+) -> None:
+  _require_zmq()
+
+  _, main_base, _ = replica_info
+
+  move_sub = zmq_context.socket(zmq.SUB)
+  move_sub.setsockopt(zmq.SUBSCRIBE, b"MOVE")
+  move_sub.setsockopt(zmq.SUBSCRIBE, b"DONE")
+
+  ack_pub = zmq_context.socket(zmq.PUB)
+  ack_pub.bind(replica_obj.listener_addr)
+
+  for peer_id, peer_host in enumerate(hosts):
+    if peer_id == replica_obj.id:
+      continue
+
+    # MOVE messages are published from the peers' main-thread addresses.
+    move_sub.connect(f"tcp://{peer_host}:{main_base + peer_id}")
+
+  poller = zmq.Poller()
+  poller.register(move_sub, zmq.POLLIN)
+
+  replicas_done: set[int] = set()
+
+  try:
+    while not shutdown_event.is_set():
+      events = dict(poller.poll(100))
+      if move_sub not in events:
+        continue
+
+      try:
+        topic, message = _receive_topic_message(move_sub)
+      except (ValueError, TypeError, json.JSONDecodeError):
+        continue
+
+      if topic == "MOVE":
+        try:
+          payload = MovePayload(
+            i=message["sender id"],
+            t=message["timestamp"],
+            p=message["parent"],
+            m=message["metadata"],
+            c=message["child"],
+          )
+        except KeyError:
+          continue
+
+        replica_obj.apply_remote_move(payload)
+        continue
+
+      if topic != "DONE":
+        continue
+
+      try:
+        sender_id = message["sender id"]
+        sender_timestamp = message["timestamp"]
+      except KeyError:
+        continue
+
+      if sender_id == replica_obj.id:
+        continue
+
+      replicas_done.add(sender_id)
+      replica_obj.tick_clock(sender_timestamp)
+
+      ack_message = {
+        "sender id": replica_obj.id,
+        "timestamp": replica_obj.current_timestamp(),
+        "ack to": sender_id,
+        "ack timestamp": sender_timestamp,
+      }
+      _send_topic_message(ack_pub, "ACK", ack_message)
+
+      if len(replicas_done) >= max(0, num_replicas - 1):
+        all_replicas_done_event.set()
+  finally:
+    move_sub.close(0)
+    ack_pub.close(0)
 
 def run_replica( # NOTE: All the parameters are set here; do not modify them
   run_id, # The random UUID for the running session of the system
@@ -95,58 +209,124 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
   hosts, # The list of hosts in the system
   max_timestamp, # The specified maximum timestamp
 ) -> None:
-  # TODO: Create the Replica object
+  _require_zmq()
 
-  # TODO: Create the ZeroMQ context for the sockets
-  # TODO: Create and setup the ZeroMQ socket for publishing to "MOVE" and "DONE"
+  replica = Replica(
+    id=replica_id,
+    host=replica_info[0],
+    main_base=replica_info[1],
+    listener_base=replica_info[2],
+  )
+  shutdown_event = threading.Event()
+  all_replicas_done_event = threading.Event()
+
+  zmq_context = zmq.Context()
+  move_pub = zmq_context.socket(zmq.PUB)
+  move_pub.bind(replica.main_addr)
 
   # Give the socket time to stabilize before other replicas connect
   time.sleep(1)
 
-  # TODO: Create and setup the ZeroMQ socket for getting subscribed to "ACK"
+  ack_sub = zmq_context.socket(zmq.SUB)
+  ack_sub.setsockopt(zmq.SUBSCRIBE, b"ACK")
+  for peer_id, peer_host in enumerate(hosts):
+    if peer_id == replica.id:
+      continue
 
-  # TODO: Create the listener thread with the arguments in the signature, and start it
-    # For non-existent parameters, you should create such parameters first as described
+    ack_sub.connect(f"tcp://{peer_host}:{replica_info[2] + peer_id}")
+
+  listener = threading.Thread(
+    target=listener_thread,
+    name=f"Replica-{replica.id}-listener",
+    args=(
+      replica,
+      zmq_context,
+      shutdown_event,
+      replica_info,
+      num_replicas,
+      hosts,
+      all_replicas_done_event,
+    ),
+  )
+  listener.start()
 
   # Wait for all replicas to bind their sockets
   time.sleep(3)
 
-  # A counter you can use for metadata purposes
-  counter: int = 0
-  
-  # The tree configuration and the associated generator are retrieved
-  move_generator = get_move_generator(tree_config)
-
-  # Continue until the maximum timestamp is reached (if it is not set, run indefinitely)
-  while True:
-    # TODO: Generate, apply, and broadcast MOVE operations
-      # Generation: parent_id, child_id, tree_type = move_generator(counter)
-
-      # Example metadata structure which you can see in sample_runs
-      # (You are free to use any dictionary structure you want):
-      # {
-      #   "count": counter,
-      #   "config": tree_type,
-      #   "replica": replica.id
-      # }
+  try:
+    # A counter you can use for metadata purposes
+    counter: int = 0
     
-    break
+    # The tree configuration and the associated generator are retrieved
+    move_generator = get_move_generator(tree_config)
 
-  # TODO: Generate the DONE message
+    # Continue until the maximum timestamp is reached (if it is not set, run indefinitely)
+    while (max_timestamp is None) or (replica.current_timestamp() < max_timestamp):
+      parent_id, child_id, tree_type = move_generator(counter)
 
-  if num_replicas > 1:
-    while True:
+      metadata = {
+        "count": counter,
+        "config": tree_type,
+        "replica": replica.id,
+      }
+      op = replica.apply_local_move(parent_id, metadata, child_id)
 
-      # TODO: Broadcast the DONE message periodically
+      move_message = {
+        "sender id": op.id,
+        "timestamp": op.timestamp,
+        "parent": op.parent,
+        "metadata": op.metadata,
+        "child": op.child,
+      }
+      _send_topic_message(move_pub, "MOVE", move_message)
 
-      # TODO: Poll the socket subscribed to "ACK", and receive the message if exists
-      # TODO: You should be keeping track of the 
+      counter += 1
+      time.sleep(0.05)
 
-      # Continue until ACKs are received from all replicas
+    acked_replicas: set[int] = set()
+    ack_poller = zmq.Poller()
+    ack_poller.register(ack_sub, zmq.POLLIN)
 
-      break
-  
-  # TODO: Join the listener thread
+    if num_replicas > 1:
+      expected_acks = {rid for rid in range(num_replicas) if rid != replica.id}
+
+      while not all_replicas_done_event.is_set():
+        done_message = {
+          "sender id": replica.id,
+          "timestamp": replica.current_timestamp(),
+        }
+        _send_topic_message(move_pub, "DONE", done_message)
+
+        events = dict(ack_poller.poll(300))
+        if ack_sub not in events:
+          continue
+
+        try:
+          topic, message = _receive_topic_message(ack_sub)
+        except (ValueError, TypeError, json.JSONDecodeError):
+          continue
+
+        if topic != "ACK":
+          continue
+
+        try:
+          sender_id = message["sender id"]
+          ack_to = message["ack to"]
+        except KeyError:
+          continue
+
+        if sender_id == replica.id or ack_to != replica.id:
+          continue
+
+        acked_replicas.add(sender_id)
+        if expected_acks.issubset(acked_replicas):
+          break
+    shutdown_event.set()
+  finally:
+    listener.join()
+    ack_sub.close(0)
+    move_pub.close(0)
+    zmq_context.term()
 
   # NOTE: You are not allowed to modify the with block below
   with open(f"runs/{run_id.hex}_replica_{replica.id}.txt", "w") as final_file:
@@ -168,10 +348,33 @@ def main( # NOTE: All the parameters are set here; do not modify them
   # The directory to write final tree state is created beforehand
   os.makedirs("runs", exist_ok = True)
 
-  # TODO: Create and start the replica processes
-  # NOTE: You should not create replica processes for remote replicas if you use any
+  processes = []
 
-  # TODO: Join the replica processes
+  # NOTE: You should not create replica processes for remote replicas if you use any
+  for replica_id, host in enumerate(hosts[:num_replicas]):
+    if host != "127.0.0.1":
+      continue
+
+    process = multiprocessing.Process(
+      target=run_replica,
+      name=f"Replica-{replica_id}",
+      args=(
+        run_id,
+        tree_config,
+        replica_id,
+        (host, main_base, listener_base),
+        num_replicas,
+        hosts,
+        max_timestamp,
+      ),
+    )
+    processes.append(process)
+
+  for process in processes:
+    process.start()
+
+  for process in processes:
+    process.join()
 
 # -----------------------------------------
 
