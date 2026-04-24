@@ -266,6 +266,7 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
 
       metadata = {
         "count": counter,
+        "timestamp": replica.current_timestamp() + 1,
         "config": tree_type,
         "replica": replica.id,
       }
