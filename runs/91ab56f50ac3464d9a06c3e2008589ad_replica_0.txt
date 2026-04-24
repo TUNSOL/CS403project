@@ -1,0 +1,6 @@
+[TREE STATE]
+Replica 0, tree structure: wide, maximum timestamp: 20
+{Node(p=None,m={'count': 0, 'timestamp': 3, 'config': 'root', 'replica': 1},c=0),
+ Node(p=0,m={'count': 1, 'timestamp': 8, 'config': 'wide_child', 'replica': 1},c=1),
+ Node(p=0,m={'count': 2, 'timestamp': 12, 'config': 'wide_child', 'replica': 1},c=2),
+ Node(p=0,m={'count': 3, 'timestamp': 19, 'config': 'wide_child', 'replica': 1},c=3)}
