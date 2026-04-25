@@ -322,6 +322,8 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
         acked_replicas.add(sender_id)
         if expected_acks.issubset(acked_replicas):
           break
+
+    time.sleep(1.0) # one of the proposed solutions in bonus report!!!
     shutdown_event.set()
   finally:
     listener.join()
