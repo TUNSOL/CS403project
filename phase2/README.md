@@ -167,3 +167,147 @@ uv run python -m unittest discover -s tests -t . -v
 - ```pyzmq```: Required for using ZeroMQ sockets in Python.
 
 - ```python-dotenv```: Required for the ability to get the environment variables from the .env files in Python.
+
+## Contributor Quickstart
+
+This section is for contributors who open the repo and need to run Phase 2 without mixing it with Phase 1. Both phases define a package named ```tree_crdt```, so run commands from the phase directory you are working on and do not put both ```phase1/src``` and ```phase2/src``` on ```PYTHONPATH``` at the same time.
+
+### Setup with pip
+
+```powershell
+cd phase2
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -e .
+pip install pyzmq python-dotenv
+```
+
+If you are already inside ```phase2```, keep ```PYTHONPATH``` pointed at this phase's source directory:
+
+```powershell
+$env:PYTHONPATH='src'
+```
+
+### Setup with uv
+
+```powershell
+cd phase2
+uv sync
+uv run python -m unittest discover -s tests -t . -v
+```
+
+### Run the tests
+
+```powershell
+cd phase2
+$env:PYTHONPATH='src'
+python -m unittest discover -s tests -t . -v
+```
+
+The current Phase 2 implementation should pass all provided tests.
+
+### Run a local Phase 2 sample-style execution
+
+This example starts three local replicas with the ```chain``` configuration and maximum timestamp ```20```.
+
+```powershell
+cd phase2
+$env:PYTHONPATH='src'
+$env:HOSTS='127.0.0.1,127.0.0.1,127.0.0.1'
+$env:MAIN_BASE='26500'
+$env:LISTENER_BASE='27500'
+$env:MAX_TIMESTAMP='20'
+$env:TREE_CONFIG='chain'
+python main.py
+```
+
+Generated output files are written to:
+
+```text
+phase2/runs/<run-id>_replica_<replica-id>.txt
+```
+
+The files under ```sample_runs/``` are reference runs, not byte-for-byte golden outputs. Exact node counts can differ because Phase 2 uses random moves/deletes and asynchronous message timing. Compare the important invariants instead:
+
+- output starts with ```[TREE STATE]```
+- tree is printed as ```list[frozenset[Node]]```
+- timestamps are vector clocks with one component per replica
+- metadata contains ```status``` and ```applied```
+- deleted nodes appear as tombstones when ```deleted=True```
+- all replicas in a run should converge to the same canonical node set
+
+Useful sample-style configurations:
+
+```powershell
+# 3 replicas, max 20
+$env:HOSTS='127.0.0.1,127.0.0.1,127.0.0.1'
+$env:MAX_TIMESTAMP='20'
+$env:TREE_CONFIG='chain'          # or wide, hierarchical
+
+# 5 replicas, max 40 or 60
+$env:HOSTS='127.0.0.1,127.0.0.1,127.0.0.1,127.0.0.1,127.0.0.1'
+$env:MAX_TIMESTAMP='40'
+$env:TREE_CONFIG='wide'           # or chain, hierarchical
+```
+
+Use different ```MAIN_BASE``` and ```LISTENER_BASE``` values if a previous run left ports busy.
+
+### Import troubleshooting
+
+If Python cannot import ```tree_crdt```:
+
+- run from ```phase2```, not the repo root;
+- set ```$env:PYTHONPATH='src'```;
+- or install the phase package with ```pip install -e .```.
+
+If Python cannot import ```zmq```:
+
+```powershell
+pip install pyzmq
+```
+
+If Python cannot import ```dotenv```:
+
+```powershell
+pip install python-dotenv
+```
+
+If VSCode or PyCharm marks imports unresolved but the terminal works, select the virtual environment interpreter and add ```phase2/src``` as a source path. For VSCode opened at the repo root, this can be added to ```.vscode/settings.json```:
+
+```json
+{
+  "python.analysis.extraPaths": ["./phase2/src"]
+}
+```
+
+### Phase 1 backward-compatibility check
+
+The Phase 2 PDF requires Phase 1 backward compatibility as a report discussion, not as a mixed-network implementation. Practical checks:
+
+```powershell
+cd ..\phase1
+$env:PYTHONPATH='src'
+python -m unittest discover -s tests -t . -v
+```
+
+Optional Phase 2 legacy constructor smoke check:
+
+```powershell
+cd ..\phase2
+$env:PYTHONPATH='src'
+@'
+from tree_crdt import Replica
+from tree_crdt.clock import LamportClock
+
+r = Replica(0, "localhost", 5000, 6000)
+assert isinstance(r.clock, LamportClock)
+print("legacy-compatible constructor path passed")
+'@ | python -
+```
+
+### Contributor notes
+
+- Keep Phase 1 and Phase 2 changes separate unless a task explicitly asks otherwise.
+- Avoid committing generated ```runs/``` files unless they are intentionally being used as reference output.
+- If runtime behavior changes, run both the unit tests and at least one multi-replica Phase 2 sample-style execution.
+- Phase 2 uses a final replay before writing ```runs/``` output so saved trees reflect the canonical snapshot-plus-log state after message drain.
