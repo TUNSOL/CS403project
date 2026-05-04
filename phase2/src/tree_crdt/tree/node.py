@@ -1,11 +1,31 @@
 from copy import deepcopy
 
 class Node:
-  def __init__(self, i, t, p, m, c):
+  def __init__(self, *args, **kwargs):
+    if args:
+      if len(args) == 5:
+        i, t, p, m, c = args
+      elif len(args) == 3:
+        i = kwargs.pop("i", -1)
+        t = kwargs.pop("t", 0)
+        p, m, c = args
+      else:
+        raise TypeError("Node expects either (i, t, p, m, c) or (p, m, c)")
+    else:
+      i = kwargs.pop("i", -1)
+      t = kwargs.pop("t", 0)
+      p = kwargs.pop("p")
+      m = kwargs.pop("m")
+      c = kwargs.pop("c")
+
+    if kwargs:
+      unexpected = ", ".join(kwargs)
+      raise TypeError(f"Unexpected Node arguments: {unexpected}")
+
     self.__i = i
-    self.__t = t
+    self.__t = deepcopy(t)
     self.__p = p
-    self.__m = m
+    self.__m = deepcopy(m)
     self.__c = c
 
   @property
@@ -31,7 +51,7 @@ class Node:
   # Returns whether the node is "active" or "deleted"
   @property
   def status(self):
-    return self.__m["status"]
+    return self.__m.get("status", "active")
 
   def __call__(self):
     return (self.__i, deepcopy(self.__t), self.__p, self.__m, self.__c)
@@ -39,19 +59,18 @@ class Node:
   def __str__(self):
     return f"Node(i={str(self.__i)},t={str(self.__t)},p={str(self.__p)},m={str(self.__m)},c={str(self.__c)})"
 
+  def __repr__(self):
+    return str(self)
+
   def __eq__(self, other):
     if not isinstance(other, self.__class__):
       return False
     
-    # Defined in order to be able to handle nested structures
-    self_m = tuple(sorted(self.__m.items()))
-    other_m = tuple(sorted(other.__m.items()))
-
     return (
       self.__i == other.__i
       and self.__t == other.__t
       and self.__p == other.__p
-      and self_m == other_m
+      and self.__m == other.__m
       and self.__c == other.__c
     )
 
