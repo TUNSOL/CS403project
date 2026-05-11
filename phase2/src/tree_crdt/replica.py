@@ -286,8 +286,10 @@ class Replica:
 
         if incoming_deleted and not existing_deleted and existing_applied:
           loser_metadata = self.__operation_metadata(op, applied=False)
-          self.__op_log.append(
-            self.__make_log_entry(op, loser_metadata, self.__current_parent(self.__tree, op.child))
+          insertion_point = self.__find_insertion_point(op)
+          self.__op_log.insert(
+              insertion_point,
+              self.__make_log_entry(op, loser_metadata, self.__current_parent(self.__tree, op.child))
           )
           return
 
