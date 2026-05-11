@@ -288,43 +288,48 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
     ack_poller = zmq.Poller()
     ack_poller.register(ack_sub, zmq.POLLIN)
 
-    if num_replicas > 1:
-      expected_acks = {rid for rid in range(num_replicas) if rid != replica.id}
+    # CHANGE 1: only one replica --> we will never receive DONE from others
+    if num_replicas == 1:
+      all_replicas_done_event.set()
 
-      while not all_replicas_done_event.is_set():
+    # CHANGE 2: if num_replicas > 1 condition is removed
+    expected_acks = {rid for rid in range(num_replicas) if rid != replica.id}
+
+
+    while not (expected_acks.issubset(acked_replicas) and all_replicas_done_event.is_set()):  # ← CHANGE 3
         done_message = {
-          "sender id": replica.id,
-          "timestamp": replica.current_timestamp(),
+            "sender id": replica.id,
+            "timestamp": replica.current_timestamp(),
         }
         _send_topic_message(move_pub, "DONE", done_message)
 
         events = dict(ack_poller.poll(300))
         if ack_sub not in events:
-          continue
+            continue
 
         try:
-          topic, message = _receive_topic_message(ack_sub)
+            topic, message = _receive_topic_message(ack_sub)
         except (ValueError, TypeError, json.JSONDecodeError):
-          continue
+            continue
 
         if topic != "ACK":
-          continue
+            continue
 
         try:
-          sender_id = message["sender id"]
-          ack_to = message["ack to"]
+            sender_id = message["sender id"]
+            ack_to = message["ack to"]
         except KeyError:
-          continue
+            continue
 
         if sender_id == replica.id or ack_to != replica.id:
-          continue
+            continue
 
         acked_replicas.add(sender_id)
-        if expected_acks.issubset(acked_replicas):
-          break
+        # CHANGE 3: no break here
 
-    time.sleep(1.0) # one of the proposed solutions in bonus report!!!
+    time.sleep(1.0)
     shutdown_event.set()
+
   finally:
     listener.join()
     ack_sub.close(0)

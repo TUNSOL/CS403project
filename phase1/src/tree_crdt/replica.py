@@ -88,10 +88,31 @@ class Replica:
         _, _, old_parent, _, metadata, child = entry
         self.__tree.move(Node(p=old_parent, m=copy.deepcopy(metadata), c=child))
 
+        """
+        ERROR 2: Previously, even when Tree.move() rejects a move operation due to cycle creation, the log
+        still recorded this operation as applied. Then during undo-do-redo, program tried to apply something 
+        that never actually changed the tree, corrupting the old_parent chain for subsequent operations.
+
+        Now, if the move operation is NOT applied, we do not add it to log.
+        """
+
       # DO: apply the new operation and insert its log entry at position k.
       existing = self.__tree[op.child]
       old_parent_of_new = existing.parent if existing is not None else None
       self.__tree.move(Node(p=op.parent, m=copy.deepcopy(op.metadata), c=op.child))
+
+      # Detect rejection by comparing tree state after the call.
+      # If the node's parent was not updated to op.parent, the move was rejected (cycle).
+      node_after = self.__tree[op.child]
+      applied = (node_after is not None and node_after.parent == op.parent)
+
+      if not applied:
+        # Move is rejected (cycle). Re-apply the undone operations; do not add to log.
+        for i in range(k, len(self.__op_log)):
+          _, _, _, new_parent, metadata, child = self.__op_log[i]
+          self.__tree.move(Node(p=new_parent, m=copy.deepcopy(metadata), c=child))
+        return
+
       self.__op_log.insert(
         k,
         (op.id, op.timestamp, old_parent_of_new, op.parent, copy.deepcopy(op.metadata), op.child),
