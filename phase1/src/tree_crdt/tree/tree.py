@@ -41,21 +41,22 @@ class Tree:
                 return True
         return False
 
-    def move(self, new_node: Node) -> None:
+    def can_move(self, new_node: Node) -> bool:
         child_id = new_node.child
         new_parent_id = new_node.parent
 
-        """
-        ERROR 1: Previous solution did not check for cycles when we were adding a node to the tree for the first time.
-        In order to fix this issue, we got rid of the existing-node check and now apply the cycle check for all moves.
-        Rejection detection is handled in replica.py by comparing the tree state before and after this call.
-        """
-
         if new_parent_id is not None and (
-        new_parent_id == child_id or self._is_ancestor(child_id, new_parent_id)
+            new_parent_id == child_id or self._is_ancestor(child_id, new_parent_id)
         ):
+            return False
+
+        return True
+
+    def move(self, new_node: Node) -> None:
+        if not self.can_move(new_node):
             return
 
+        child_id = new_node.child
         self.__nodes[child_id] = new_node
 
     def __str__(self) -> str:

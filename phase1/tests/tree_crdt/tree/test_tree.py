@@ -80,5 +80,14 @@ class TestTree(unittest.TestCase):
     # Modified node should not be there
     self.assertNotIn(node1_modified, nodes)
 
+  # TEST: Cannot create a cycle when the node is inserted for the first time
+  def test_prevent_self_cycle_for_new_node(self):
+    node = Node(p=1, m={}, c=1)
+    self.tree.move(node)
+
+    nodes = self.tree()
+    self.assertEqual(len(nodes), 0)
+    self.assertNotIn(node, nodes)
+
 if __name__ == '__main__':
   unittest.main()

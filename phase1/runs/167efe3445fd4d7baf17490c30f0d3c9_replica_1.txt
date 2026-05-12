@@ -1,0 +1,3 @@
+[TREE STATE]
+Replica 1, tree structure: hierarchical, maximum timestamp: 8
+{Node(p=None,m={'count': 0, 'timestamp': 8, 'config': 'root', 'replica': 2},c=0)}

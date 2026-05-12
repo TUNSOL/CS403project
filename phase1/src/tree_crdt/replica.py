@@ -11,6 +11,8 @@ class Replica:
     self.__id = id
     self.__clock = LamportClock(id)
     self.__tree = Tree()
+    self.__all_ops: list[tuple[int, int, int | None, dict, int]] = []
+    #                         (replica_id, timestamp, new_parent, metadata, child)
     self.__op_log: list[tuple[int, int, int | None, int | None, dict, int]] = []
     #                         (replica_id, timestamp, old_parent, new_parent, metadata, child)
     self.__zmq_main_addr = f"tcp://{host}:{main_base + id}"
@@ -55,77 +57,54 @@ class Replica:
 
   def _entry_matches_payload(
     self,
-    entry: tuple[int, int, int | None, int | None, dict, int],
+    entry: tuple[int, int, int | None, dict, int],
     op: MovePayload,
   ) -> bool:
     return (
       entry[0] == op.id
       and entry[1] == op.timestamp
-      and entry[3] == op.parent
-      and entry[4] == op.metadata
-      and entry[5] == op.child
+      and entry[2] == op.parent
+      and entry[3] == op.metadata
+      and entry[4] == op.child
     )
+
+  def _rebuild_from_all_ops(self) -> None:
+    self.__tree = Tree()
+    self.__op_log = []
+
+    for replica_id, timestamp, new_parent, metadata, child in self.__all_ops:
+      new_node = Node(p=new_parent, m=copy.deepcopy(metadata), c=child)
+      existing = self.__tree[child]
+      old_parent = existing.parent if existing is not None else None
+
+      if not self.__tree.can_move(new_node):
+        continue
+
+      self.__tree.move(new_node)
+      self.__op_log.append(
+        (replica_id, timestamp, old_parent, new_parent, copy.deepcopy(metadata), child)
+      )
 
   def apply_move(self, op: MovePayload) -> None:
     with self.__lock:
       # skip if this exact operation is already in the log
-      if any(self._entry_matches_payload(entry, op) for entry in self.__op_log):
+      if any(self._entry_matches_payload(entry, op) for entry in self.__all_ops):
         return
 
       # The log is always kept sorted by (timestamp, replica_id).
       # Scan forward to find the insertion point k for the new operation.
       new_key = (op.timestamp, op.id)
-      k = len(self.__op_log)
-      for i, entry in enumerate(self.__op_log):
+      k = len(self.__all_ops)
+      for i, entry in enumerate(self.__all_ops):
         if (entry[1], entry[0]) >= new_key:
           k = i
           break
 
-      # UNDO: restore each entry from the end back to position k, in reverse order.
-      # Each entry stores old_parent so we can roll the node back to where it was
-      # before that operation was applied.
-      for entry in reversed(self.__op_log[k:]):
-        _, _, old_parent, _, metadata, child = entry
-        self.__tree.move(Node(p=old_parent, m=copy.deepcopy(metadata), c=child))
-
-        """
-        ERROR 2: Previously, even when Tree.move() rejects a move operation due to cycle creation, the log
-        still recorded this operation as applied. Then during undo-do-redo, program tried to apply something 
-        that never actually changed the tree, corrupting the old_parent chain for subsequent operations.
-
-        Now, if the move operation is NOT applied, we do not add it to log.
-        """
-
-      # DO: apply the new operation and insert its log entry at position k.
-      existing = self.__tree[op.child]
-      old_parent_of_new = existing.parent if existing is not None else None
-      self.__tree.move(Node(p=op.parent, m=copy.deepcopy(op.metadata), c=op.child))
-
-      # Detect rejection by comparing tree state after the call.
-      # If the node's parent was not updated to op.parent, the move was rejected (cycle).
-      node_after = self.__tree[op.child]
-      applied = (node_after is not None and node_after.parent == op.parent)
-
-      if not applied:
-        # Move is rejected (cycle). Re-apply the undone operations; do not add to log.
-        for i in range(k, len(self.__op_log)):
-          _, _, _, new_parent, metadata, child = self.__op_log[i]
-          self.__tree.move(Node(p=new_parent, m=copy.deepcopy(metadata), c=child))
-        return
-
-      self.__op_log.insert(
+      self.__all_ops.insert(
         k,
-        (op.id, op.timestamp, old_parent_of_new, op.parent, copy.deepcopy(op.metadata), op.child),
+        (op.id, op.timestamp, op.parent, copy.deepcopy(op.metadata), op.child),
       )
-
-      # REDO: reapply every entry after position k in forward order.
-      # old_parent is updated in the log to reflect the tree state just before each redo.
-      for i in range(k + 1, len(self.__op_log)):
-        replica_id, timestamp, _, new_parent, metadata, child = self.__op_log[i]
-        existing = self.__tree[child]
-        actual_old_parent = existing.parent if existing is not None else None
-        self.__tree.move(Node(p=new_parent, m=copy.deepcopy(metadata), c=child))
-        self.__op_log[i] = (replica_id, timestamp, actual_old_parent, new_parent, metadata, child)
+      self._rebuild_from_all_ops()
 
   
   def apply_local_move(self, parent, metadata: dict, child: int) -> MovePayload:

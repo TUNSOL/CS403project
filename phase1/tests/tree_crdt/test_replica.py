@@ -129,6 +129,33 @@ class TestReplicaOutOfOrderOperations(unittest.TestCase):
     observed_order = [(replica_id, timestamp) for replica_id, timestamp, _, _, _, _ in log_entries]
     self.assertEqual(observed_order, [(1, 5), (2, 5)])
 
+  def test_rejected_early_operation_can_apply_after_reordering(self):
+    """A move rejected in delivery order may be valid in Lamport order."""
+    # Delivered first, this is valid alone: 1 -> 3.
+    later_move = MovePayload(i=0, t=3, p=1, m={"op": "later"}, c=3)
+    # Delivered second, this is rejected against the current delivery-order tree
+    # because 3 is currently a child of 1.
+    middle_move = MovePayload(i=0, t=2, p=3, m={"op": "middle"}, c=1)
+    # Delivered last, but ordered first, this moves 3 back to the root.
+    earlier_move = MovePayload(i=0, t=1, p=None, m={"op": "earlier"}, c=3)
+
+    self.replica.apply_remote_move(later_move)
+    self.replica.apply_remote_move(middle_move)
+    self.replica.apply_remote_move(earlier_move)
+
+    tree_snapshot = self.replica.tree
+    node1 = cast(Node, tree_snapshot[1])
+    node3 = cast(Node, tree_snapshot[3])
+
+    self.assertIsNotNone(node1)
+    self.assertIsNotNone(node3)
+    self.assertEqual(node1.parent, 3)
+    self.assertIsNone(node3.parent)
+
+    log_entries = self.replica.log
+    observed_order = [(replica_id, timestamp) for replica_id, timestamp, _, _, _, _ in log_entries]
+    self.assertEqual(observed_order, [(0, 1), (0, 2)])
+
 
 class TestReplicaLogManagement(unittest.TestCase):
   """Test suite for operation log management"""
