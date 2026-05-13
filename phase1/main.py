@@ -42,6 +42,15 @@ def _receive_topic_message(socket):
   topic_raw, payload_raw = socket.recv_multipart()
   return topic_raw.decode("utf-8"), json.loads(payload_raw.decode("utf-8"))
 
+def _message_field(message, *keys):
+  # The original implementation used keys like "sender id", while the
+  # group5 DONE/ACK test sends snake_case keys. Accept both for protocol
+  # compatibility instead of dropping a valid DONE message as malformed.
+  for key in keys:
+    if key in message:
+      return message[key]
+  raise KeyError(keys[0])
+
 # -----------------------------------------
 
 # Helper functions:
@@ -159,7 +168,7 @@ def listener_thread(
       if topic == "MOVE":
         try:
           payload = MovePayload(
-            i=message["sender id"],
+            i=_message_field(message, "sender_id", "sender id"),
             t=message["timestamp"],
             p=message["parent"],
             m=message["metadata"],
@@ -175,7 +184,7 @@ def listener_thread(
         continue
 
       try:
-        sender_id = message["sender id"]
+        sender_id = _message_field(message, "sender_id", "sender id")
         sender_timestamp = message["timestamp"]
       except KeyError:
         continue
@@ -187,9 +196,14 @@ def listener_thread(
       replica_obj.tick_clock(sender_timestamp)
 
       ack_message = {
+        # Include both key styles so older Phase 1 code and the group5
+        # DONE/ACK test can parse the ACK response.
+        "sender_id": replica_obj.id,
         "sender id": replica_obj.id,
         "timestamp": replica_obj.current_timestamp(),
+        "ack_to": sender_id,
         "ack to": sender_id,
+        "ack_timestamp": sender_timestamp,
         "ack timestamp": sender_timestamp,
       }
       _send_topic_message(ack_pub, "ACK", ack_message)
@@ -273,6 +287,8 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
       op = replica.apply_local_move(parent_id, metadata, child_id)
 
       move_message = {
+        # Keep both protocol key styles on the wire for backward compatibility.
+        "sender_id": op.id,
         "sender id": op.id,
         "timestamp": op.timestamp,
         "parent": op.parent,
@@ -298,6 +314,9 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
 
     while not (expected_acks.issubset(acked_replicas) and all_replicas_done_event.is_set()):  # ← CHANGE 3
         done_message = {
+            # The listener accepts either key; publishing both keeps mixed
+            # implementations from missing DONE messages.
+            "sender_id": replica.id,
             "sender id": replica.id,
             "timestamp": replica.current_timestamp(),
         }
@@ -316,8 +335,8 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
             continue
 
         try:
-            sender_id = message["sender id"]
-            ack_to = message["ack to"]
+            sender_id = _message_field(message, "sender_id", "sender id")
+            ack_to = _message_field(message, "ack_to", "ack to")
         except KeyError:
             continue
 
