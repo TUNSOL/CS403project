@@ -214,6 +214,10 @@ def listener_thread(
     move_sub.close(0)
     ack_pub.close(0)
 
+# Some scenario tests and older Phase 1 handouts call the listener
+# `replica_listener`. Keep the alias so they exercise the same implementation.
+replica_listener = listener_thread
+
 def run_replica( # NOTE: All the parameters are set here; do not modify them
   run_id, # The random UUID for the running session of the system
   tree_config, # Retrieved from .env
