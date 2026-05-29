@@ -1,0 +1,26 @@
+[TREE STATE]
+Replica 0, tree structure: wide, number of op messages: 20
+
+Local tree:
+{Node(p=None,m={'status': 'active'},c=0),
+ Node(p=0,m={'status': 'active'},c=1),
+ Node(p=0,m={'status': 'active'},c=2),
+ Node(p=0,m={'status': 'active'},c=3),
+ Node(p=0,m={'status': 'deleted'},c=4),
+ Node(p=0,m={'status': 'deleted'},c=5),
+ Node(p=0,m={'status': 'active'},c=6),
+ Node(p=0,m={'status': 'deleted'},c=7),
+ Node(p=0,m={'status': 'active'},c=8),
+ Node(p=0,m={'status': 'deleted'},c=9)}
+
+Tree snapshot:
+{Node(p=None,m={'status': 'active'},c=0),
+ Node(p=0,m={'status': 'active'},c=1),
+ Node(p=0,m={'status': 'active'},c=2),
+ Node(p=0,m={'status': 'active'},c=3),
+ Node(p=0,m={'status': 'deleted'},c=4),
+ Node(p=0,m={'status': 'deleted'},c=5),
+ Node(p=0,m={'status': 'active'},c=6),
+ Node(p=0,m={'status': 'deleted'},c=7),
+ Node(p=0,m={'status': 'active'},c=8),
+ Node(p=0,m={'status': 'deleted'},c=9)}

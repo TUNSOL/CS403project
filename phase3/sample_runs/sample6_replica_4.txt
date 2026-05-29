@@ -1,0 +1,46 @@
+[TREE STATE]
+Replica 4, tree structure: hierarchical, number of op messages: 40
+
+Local tree:
+{Node(p=None,m={'status': 'active'},c=0),
+ Node(p=17,m={'status': 'active'},c=1),
+ Node(p=3,m={'status': 'deleted'},c=2),
+ Node(p=0,m={'status': 'deleted'},c=3),
+ Node(p=17,m={'status': 'active'},c=14),
+ Node(p=2,m={'status': 'deleted'},c=15),
+ Node(p=3,m={'status': 'active'},c=16),
+ Node(p=0,m={'status': 'active'},c=17),
+ Node(p=24,m={'status': 'active'},c=18),
+ Node(p=3,m={'status': 'deleted'},c=19),
+ Node(p=23,m={'status': 'deleted'},c=20),
+ Node(p=3,m={'status': 'deleted'},c=21),
+ Node(p=3,m={'status': 'deleted'},c=22),
+ Node(p=0,m={'status': 'deleted'},c=23),
+ Node(p=0,m={'status': 'deleted'},c=24),
+ Node(p=23,m={'status': 'deleted'},c=25),
+ Node(p=1,m={'status': 'deleted'},c=26),
+ Node(p=3,m={'status': 'deleted'},c=27),
+ Node(p=0,m={'status': 'active'},c=28),
+ Node(p=17,m={'status': 'active'},c=29)}
+
+Tree snapshot:
+{Node(p=None,m={'status': 'active'},c=0),
+ Node(p=17,m={'status': 'active'},c=1),
+ Node(p=3,m={'status': 'deleted'},c=2),
+ Node(p=0,m={'status': 'deleted'},c=3),
+ Node(p=17,m={'status': 'active'},c=14),
+ Node(p=2,m={'status': 'deleted'},c=15),
+ Node(p=3,m={'status': 'active'},c=16),
+ Node(p=0,m={'status': 'active'},c=17),
+ Node(p=24,m={'status': 'active'},c=18),
+ Node(p=3,m={'status': 'deleted'},c=19),
+ Node(p=23,m={'status': 'deleted'},c=20),
+ Node(p=3,m={'status': 'deleted'},c=21),
+ Node(p=3,m={'status': 'deleted'},c=22),
+ Node(p=0,m={'status': 'deleted'},c=23),
+ Node(p=0,m={'status': 'deleted'},c=24),
+ Node(p=23,m={'status': 'deleted'},c=25),
+ Node(p=1,m={'status': 'deleted'},c=26),
+ Node(p=3,m={'status': 'deleted'},c=27),
+ Node(p=0,m={'status': 'active'},c=28),
+ Node(p=17,m={'status': 'active'},c=29)}
