@@ -1,4 +1,11 @@
+from copy import deepcopy
+
 from .node import Node
+
+
+class _NodeSet(set):
+  def __repr__(self):
+    return "{" + ", ".join(str(node) for node in sorted(self)) + "}"
 
 
 class Tree:
@@ -23,8 +30,7 @@ class Tree:
 
   def __init__(self):
     """Construct an empty tree."""
-    # TODO: initialise an empty container for the child-to-Node mapping.
-    raise NotImplementedError("TODO: implement Tree.__init__")
+    self.__nodes: dict[int, Node] = {}
 
   def __call__(self, deleted=False):
     """Return the current tree state as a `set[Node]`.
@@ -32,8 +38,11 @@ class Tree:
     If `deleted` is False (default), nodes whose `status` is "deleted"
     are filtered out. If `deleted` is True, they are included.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement Tree.__call__")
+    result = _NodeSet()
+    for node in self.__nodes.values():
+      if deleted or node.metadata.get("status") != "deleted":
+        result.add(node)
+    return result
 
   def __getitem__(self, key):
     """Return the `Node` associated with `key`, or `None` if unknown.
@@ -41,8 +50,32 @@ class Tree:
     Returns a single Node (not a set) because the tree is
     single-valued in Phase 3.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement Tree.__getitem__")
+    return self.__nodes.get(key)
+
+  def __iter__(self):
+    return iter(sorted(self.__nodes))
+
+  @staticmethod
+  def __is_deleted_node(node: Node | None) -> bool:
+    return node is None or node.metadata.get("status") == "deleted"
+
+  def __is_ancestor(self, ancestor_id, node_id) -> bool:
+    current_id = node_id
+    visited = set()
+    while current_id is not None:
+      if current_id in visited:
+        return False
+      visited.add(current_id)
+
+      node = self.__nodes.get(current_id)
+      if node is None:
+        return False
+
+      current_id = node.parent
+      if current_id == ancestor_id:
+        return True
+
+    return False
 
   def get_active(self, key):
     """Return the `Node` at `key` iff it is reachable from the root and not deleted.
@@ -53,8 +86,27 @@ class Tree:
     parent-pointer walk; the multi-value BFS of Phase 2 is no longer
     necessary.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement Tree.get_active")
+    node = self.__nodes.get(key)
+    if self.__is_deleted_node(node):
+      return None
+
+    current = node
+    visited = set()
+    while current is not None:
+      if current.child in visited:
+        return None
+      visited.add(current.child)
+
+      if current.metadata.get("status") == "deleted":
+        return None
+      if current.parent is None:
+        return node
+
+      current = self.__nodes.get(current.parent)
+      if current is None:
+        return None
+
+    return None
 
   def move(self, parent, metadata, child):
     """Apply a Move (or Delete, depending on metadata["status"]).
@@ -79,9 +131,33 @@ class Tree:
       - "Status" is required in `metadata`; if it is missing, the
         method should be a no-op.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement Tree.move")
+    if metadata is None or "status" not in metadata:
+      return None
+
+    metadata = deepcopy(metadata)
+    status = metadata.get("status")
+
+    if status == "deleted":
+      existing = self.__nodes.get(child)
+      tombstone_parent = existing.parent if existing is not None else parent
+      if tombstone_parent == child or (
+        tombstone_parent is not None and self.__is_ancestor(child, tombstone_parent)
+      ):
+        tombstone_parent = None
+      self.__nodes[child] = Node(p=tombstone_parent, m=metadata, c=child)
+      return None
+
+    if status != "deleted":
+      if child == parent:
+        return None
+      if parent is not None and self.__is_ancestor(child, parent):
+        return None
+
+    self.__nodes[child] = Node(p=parent, m=metadata, c=child)
+    return None
 
   def __str__(self):
-    # TODO
-    raise NotImplementedError("TODO: implement Tree.__str__")
+    return str(self())
+
+  def __repr__(self):
+    return str(self)

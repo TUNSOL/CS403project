@@ -1,0 +1,8 @@
+[TREE STATE]
+Replica 1, tree structure: chain, number of op messages: 4
+
+Local tree:
+{Node(p=None,m={'count': 0, 'config': 'chain_node', 'replica': 0, 'status': 'active'},c=0), Node(p=0,m={'count': 3, 'config': 'random_move', 'replica': 0, 'status': 'active'},c=1)}
+
+Tree snapshot:
+{Node(p=None,m={'count': 0, 'config': 'chain_node', 'replica': 0, 'status': 'active'},c=0), Node(p=0,m={'count': 3, 'config': 'random_move', 'replica': 0, 'status': 'active'},c=1)}

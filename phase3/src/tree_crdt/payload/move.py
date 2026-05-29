@@ -31,3 +31,13 @@ class MovePayload:
   
   def __str__(self) -> str:
     return f"{self.__i},({self.__t},{self.__p},{self.__m},{self.__c})"
+
+  def __repr__(self) -> str:
+    return (
+      "MovePayload("
+      f"id={self.__i!r}, "
+      f"timestamp={self.__t!r}, "
+      f"parent={self.__p!r}, "
+      f"metadata={self.__m!r}, "
+      f"child={self.__c!r})"
+    )

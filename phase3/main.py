@@ -29,6 +29,22 @@ def parse_hosts(host_str):
 def parse_numbers(nums_str):
   return [int(num) for num in nums_str.split(",")]
 
+def _send_topic_message(socket, topic, payload):
+  socket.send_multipart([
+    topic.encode("utf-8"),
+    json.dumps(payload).encode("utf-8"),
+  ])
+
+def _receive_topic_message(socket):
+  topic_raw, payload_raw = socket.recv_multipart()
+  return topic_raw.decode("utf-8"), json.loads(payload_raw.decode("utf-8"))
+
+def _message_get(message, *keys, default=None):
+  for key in keys:
+    if key in message:
+      return message[key]
+  return default
+
 # -----------------------------------------
 
 # Pub-Sub topics:
@@ -187,6 +203,70 @@ def get_move_generator(config_name):
 # Use a short poll timeout so the thread can observe
 # `shutdown_event` promptly even when no peer is sending.
 
+def listener_thread(
+  replica_obj,
+  zmq_context,
+  shutdown_event,
+  replica_info,
+  num_replicas,
+  hosts,
+  all_replicas_done_event,
+):
+  _, main_base, _ = replica_info
+
+  move_sub = zmq_context.socket(zmq.SUB)
+  move_sub.setsockopt(zmq.SUBSCRIBE, b"MOVE")
+
+  barrier_rep = zmq_context.socket(zmq.REP)
+  barrier_rep.setsockopt(zmq.LINGER, 0)
+  barrier_rep.bind(replica_obj.listener_addr)
+
+  for peer_id, peer_host in enumerate(hosts):
+    if peer_id != replica_obj.id:
+      move_sub.connect(f"tcp://{peer_host}:{main_base + peer_id}")
+
+  poller = zmq.Poller()
+  poller.register(move_sub, zmq.POLLIN)
+  poller.register(barrier_rep, zmq.POLLIN)
+  replicas_done: set[int] = set()
+
+  try:
+    while not shutdown_event.is_set():
+      events = dict(poller.poll(100))
+
+      if move_sub in events:
+        try:
+          topic, message = _receive_topic_message(move_sub)
+          if topic == "MOVE":
+            payload = MovePayload(
+              i=_message_get(message, "sender_id", "sender id"),
+              t=message["timestamp"],
+              p=message["parent"],
+              m=message["metadata"],
+              c=message["child"],
+            )
+            replica_obj.apply_remote_move(payload)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+          pass
+
+      if barrier_rep in events:
+        try:
+          message = barrier_rep.recv_json()
+          sender_id = _message_get(message, "sender_id", "sender id")
+          barrier_type = message.get("type", "DONE")
+          if barrier_type == "DONE" and sender_id != replica_obj.id:
+            replicas_done.add(sender_id)
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError):
+          pass
+
+        barrier_rep.send_string("ACK")
+
+        if len(replicas_done) >= max(0, num_replicas - 1):
+          all_replicas_done_event.set()
+  finally:
+    move_sub.close(0)
+    barrier_rep.close(0)
+
 def run_replica( # NOTE: All the parameters are set here; do not modify them
   run_id,           # The random UUID for the running session of the system
   tree_config,      # Retrieved from .env
@@ -203,32 +283,57 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
   phase2_limit = num_messages        # then random moves/deletes
   op_limits = {rid: num_op_messages[rid] for rid in range(num_replicas)}
 
-  # TODO: Create the Replica object.
-  #       Phase 3 constructor signature:
-  #         Replica(replica_id, host, main_base, listener_base,
-  #                 num_replicas, raft_base, hosts, op_limits)
-  #       See the Phase 3 PDF, section "The Replica Class", for the
-  #       meaning of the new arguments.
+  replica_obj = Replica(
+    id=replica_id,
+    host=host,
+    main_base=main_base,
+    listener_base=listener_base,
+    num_replicas=num_replicas,
+    raft_base=raft_base,
+    peer_hosts=hosts,
+    op_limits=op_limits,
+  )
+  shutdown_event = threading.Event()
+  all_replicas_done_event = threading.Event()
+  if num_replicas == 1:
+    all_replicas_done_event.set()
 
-  # TODO: Create the ZeroMQ context for the sockets.
-
-  # TODO: Create and set up the MOVE-PUB socket (PUB-SUB), bound to the
-  #       replica's main address. Used to broadcast MOVE operations.
+  zmq_context = zmq.Context()
+  move_pub_socket = zmq_context.socket(zmq.PUB)
+  move_pub_socket.setsockopt(zmq.LINGER, 0)
+  move_pub_socket.bind(replica_obj.main_addr)
 
   # Give the MOVE-PUB socket time to stabilise before other replicas
   # connect to it.
   time.sleep(1)
 
-  # TODO: Create and set up one BARRIER-REQ socket (REQ-REP) PER PEER,
-  #       each connected to that peer's listener address. This
-  #       socket type is used for DONE messages.
-  #       Set a recv() timeout (e.g. 5 seconds) on every BARRIER-REQ
-  #       socket so a crashed peer cannot deadlock you.
+  def make_barrier_socket(peer_id):
+    socket = zmq_context.socket(zmq.REQ)
+    socket.setsockopt(zmq.RCVTIMEO, 5000)
+    socket.setsockopt(zmq.LINGER, 0)
+    socket.connect(f"tcp://{hosts[peer_id]}:{listener_base + peer_id}")
+    return socket
 
-  # TODO: Create the listener thread with the arguments described in
-  #       the listener-function signature above, and start it. You
-  #       will need to construct the barrier event (DONE)
-  #       here and thread them through.
+  barrier_sockets = {
+    peer_id: make_barrier_socket(peer_id)
+    for peer_id in range(num_replicas)
+    if peer_id != replica_obj.id
+  }
+
+  listener = threading.Thread(
+    target=listener_thread,
+    name=f"Replica-{replica_obj.id}-listener",
+    args=(
+      replica_obj,
+      zmq_context,
+      shutdown_event,
+      replica_info,
+      num_replicas,
+      hosts,
+      all_replicas_done_event,
+    ),
+  )
+  listener.start()
 
   # Wait for all replicas to bind their sockets.
   time.sleep(3)
@@ -244,56 +349,72 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
       else:
         parent_id, child_id, tree_type = generate_random_move_delete(replica_obj, counter, tree_config)
 
-      # TODO: Apply the move locally and broadcast it.
-      #
-      # Example metadata structure (the "status" key is REQUIRED in
-      # Phase 3; it carries "active" for moves and "deleted" for
-      # deletes):
-      #   {
-      #     "count":   counter,
-      #     "config":  tree_type,
-      #     "replica": replica_obj.id,
-      #     "status":  "deleted" if tree_type == "random_delete" else "active",
-      #   }
-      #
-      # The Phase 2 `metadata["applied"]` key is no longer used in
-      # Phase 3 -- see the Phase 3 PDF, section "Insertion Into the
-      # Log and the Undo-Do-Redo Sequence".
-      #
-      # Broadcast via MOVE-PUB socket as a JSON object containing
-      # at least {sender_id, timestamp, parent, metadata, child}.
+      metadata = {
+        "count": counter,
+        "config": tree_type,
+        "replica": replica_obj.id,
+        "status": "deleted" if tree_type == "random_delete" else "active",
+      }
+      move_payload = replica_obj.apply_local_move(parent_id, metadata, child_id)
+      _send_topic_message(
+        move_pub_socket,
+        "MOVE",
+        {
+          "sender_id": replica_obj.id,
+          "timestamp": move_payload.timestamp,
+          "parent": move_payload.parent,
+          "metadata": move_payload.metadata,
+          "child": move_payload.child,
+        },
+      )
 
       counter += 1
-      time.sleep(1)
+      time.sleep(0.05)
 
     # 2. PHASE 1 - BARRIER: DONE / ACK on top of completed local generation.
     #    See the Phase 3 PDF, section "Two-Phase Shutdown" -- this
     #    is the Phase 2 barrier kept in place.
     #
-    # TODO: Generate the DONE message
-    #       ({"sender_id": replica_id, "type": "DONE"}) and run the
-    #       same exit-condition loop as in Phase 2:
-    #         while not all_replicas_done_event.is_set()
-    #               or received_acks != set(range(num_replicas)) - {replica_id}:
-    #           for each peer not yet in received_acks:
-    #             send DONE on its BARRIER-REQ socket
-    #             try to recv() "ACK" within the timeout
-    #               - on success: add peer to received_acks
-    #               - on zmq.Again: close and recreate the socket
-    #                 (a REQ socket is stuck in "awaiting reply"
-    #                 state after a timeout)
-    #         time.sleep(0.2)
-    #
-    # The barrier ends when every peer has acknowledged DONE.
+    expected_peers = {peer_id for peer_id in range(num_replicas) if peer_id != replica_obj.id}
+    received_done_acks: set[int] = set()
+    while not (all_replicas_done_event.is_set() and expected_peers.issubset(received_done_acks)):
+      for peer_id in expected_peers - received_done_acks:
+        try:
+          barrier_sockets[peer_id].send_json({
+            "sender_id": replica_obj.id,
+            "type": "DONE",
+            "timestamp": replica_obj.current_timestamp(),
+          })
+          if barrier_sockets[peer_id].recv_string() == "ACK":
+            received_done_acks.add(peer_id)
+        except zmq.Again:
+          barrier_sockets[peer_id].close(0)
+          barrier_sockets[peer_id] = make_barrier_socket(peer_id)
+      time.sleep(0.2)
 
     # 3. PHASE 2 - RAFT FLUSH: block until the RAFT-driven compaction frontier
     #    catches up with the total number of operations every replica
     #    has agreed to issue (sum of op_limits). See the Phase 3 PDF,
     #    section "Two-Phase Shutdown".
     #
-    # TODO: success = replica_obj.flush_snapshot(timeout_seconds=30.0)
-    #       Log a warning if `success` is False; do NOT abort -- the
-    #       teardown sequence below still has to run.
+    success = replica_obj.flush_snapshot(timeout_seconds=30.0)
+    if not success:
+      print(f"Replica {replica_obj.id}: RAFT snapshot flush timed out", flush=True)
+
+    received_shutdown_acks: set[int] = set()
+    while not expected_peers.issubset(received_shutdown_acks):
+      for peer_id in expected_peers - received_shutdown_acks:
+        try:
+          barrier_sockets[peer_id].send_json({
+            "sender_id": replica_obj.id,
+            "type": "SHUTDOWN",
+          })
+          if barrier_sockets[peer_id].recv_string() == "ACK":
+            received_shutdown_acks.add(peer_id)
+        except zmq.Again:
+          barrier_sockets[peer_id].close(0)
+          barrier_sockets[peer_id] = make_barrier_socket(peer_id)
+      time.sleep(0.2)
 
   finally:
     # 4. PHASE 2 - TWO-STAGE RAFT TEARDOWN. The two stages exist for a specific
@@ -311,13 +432,14 @@ def run_replica( # NOTE: All the parameters are set here; do not modify them
     #    first, peers whose `close_raft_channels()` had not yet
     #    fired would see their outbound calls time out.
     #
-    # TODO: shutdown_event.set()
-    #       listener_thread.join(2.0)
-    #     if num_replicas > 1:
-    #       replica_obj.close_raft_channels()
-    #       replica_obj.close_raft_server()
-    #       move_pub_socket.close()
-    #       zmq_context.term()
+    shutdown_event.set()
+    listener.join(timeout=2.0)
+    replica_obj.close_raft_channels()
+    replica_obj.close_raft_server()
+    for socket in barrier_sockets.values():
+      socket.close(0)
+    move_pub_socket.close(0)
+    zmq_context.term()
 
     # NOTE: You are not allowed to modify the with block below.
     with open(f"runs/{run_id.hex}_replica_{replica_obj.id}.txt", "w") as final_file:
@@ -342,13 +464,32 @@ def main( # NOTE: All the parameters are set here; do not modify them
   # The directory to write the final tree state is created beforehand.
   os.makedirs("runs", exist_ok=True)
 
-  # TODO: Create and start the replica processes (one per local host).
-  #       Each process target is `run_replica` with the per-replica
-  #       arguments. Use `multiprocessing.Process(...)` and only
-  #       launch processes for replica IDs whose host is local
-  #       (typically `127.0.0.1`).
-  #
-  # TODO: Join the replica processes.
+  processes = []
+  for replica_id, host in enumerate(hosts[:num_replicas]):
+    if host != "127.0.0.1":
+      continue
+
+    process = multiprocessing.Process(
+      target=run_replica,
+      name=f"Replica-{replica_id}",
+      args=(
+        run_id,
+        tree_config,
+        replica_id,
+        (host, main_base, listener_base),
+        raft_base,
+        num_replicas,
+        hosts,
+        num_op_messages,
+      ),
+    )
+    processes.append(process)
+
+  for process in processes:
+    process.start()
+
+  for process in processes:
+    process.join()
 
 # -----------------------------------------
 

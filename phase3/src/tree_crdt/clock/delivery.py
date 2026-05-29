@@ -1,4 +1,7 @@
+from copy import deepcopy
+
 from . import Clock
+from .vector import VectorClock
 
 
 class DeliveryClock(Clock):
@@ -30,20 +33,19 @@ class DeliveryClock(Clock):
   def __init__(self, id, max_id):
     """Initialise the checkpoint vector for replica `id` in a system of `max_id` replicas."""
     super().__init__()
-    # TODO: store the replica id and initialise the dict {0: 0, 1: 0, ..., max_id-1: 0}.
-    raise NotImplementedError("TODO: implement DeliveryClock.__init__")
+    self.__id = int(id)
+    clock_size = max(int(max_id), self.__id + 1)
+    self.__timestamp = {replica_id: 0 for replica_id in range(clock_size)}
 
   @property
   def id(self):
     """Return the ID of the replica that owns this checkpoint vector."""
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.id")
+    return self.__id
 
   @property
   def timestamp(self):
     """Return a DEEP COPY of the current checkpoint vector."""
-    # TODO: deepcopy is required; do not return the internal dict directly.
-    raise NotImplementedError("TODO: implement DeliveryClock.timestamp")
+    return deepcopy(self.__timestamp)
 
   def update(self, received):
     """Advance the checkpoint vector by one operation from the given source.
@@ -54,8 +56,10 @@ class DeliveryClock(Clock):
     Each call corresponds to exactly one operation being folded into
     the local stable tree.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.update")
+    source = self.__id if received is None else int(received)
+    if source not in self.__timestamp:
+      self.__timestamp[source] = 0
+    self.__timestamp[source] += 1
 
   def set_timestamp(self, timestamp):
     """Overwrite the internal checkpoint vector with the given dict.
@@ -64,12 +68,13 @@ class DeliveryClock(Clock):
     argument is copied component-by-component, aliasing is not
     permitted.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.set_timestamp")
+    normalized = VectorClock._normalize_timestamp(timestamp)
+    if not isinstance(normalized, dict):
+      return
+    self.__timestamp = {int(key): int(value) for key, value in normalized.items()}
 
   def __str__(self):
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.__str__")
+    return str(self.__timestamp)
 
   # ---------------------------------------------------------------------
   # Class methods for comparison helpers (Phase 3 total order)
@@ -81,20 +86,17 @@ class DeliveryClock(Clock):
   @classmethod
   def timestamp_le(cls, lhs, rhs):
     """Return True iff lhs <= rhs under the total order of Phase 3."""
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.timestamp_le")
+    return VectorClock.timestamp_le(lhs, rhs)
 
   @classmethod
   def timestamp_lt(cls, lhs, rhs):
     """Return True iff lhs < rhs under the total order of Phase 3."""
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.timestamp_lt")
+    return VectorClock.timestamp_lt(lhs, rhs)
 
   @classmethod
   def timestamp_eq(cls, lhs, rhs):
     """Return True iff lhs and rhs are componentwise equal."""
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.timestamp_eq")
+    return VectorClock.timestamp_eq(lhs, rhs)
 
   @classmethod
   def timestamp_concurrent(cls, lhs, rhs):
@@ -102,5 +104,4 @@ class DeliveryClock(Clock):
 
     Under the Phase 3 total order this is identically False.
     """
-    # TODO
-    raise NotImplementedError("TODO: implement DeliveryClock.timestamp_concurrent")
+    return False

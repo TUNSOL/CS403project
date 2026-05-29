@@ -124,6 +124,10 @@ class RaftNode(Generic[CommandT]):
     self.__voted_for = self.__id
     self.__reset_election_timer()
 
+    if len(self.__votes_received) >= self.__quorum_size():
+      self.__become_leader()
+      return
+
     request = RequestVote(
       term=self.__current_term,
       candidate_id=self.__id,
@@ -254,6 +258,7 @@ class RaftNode(Generic[CommandT]):
       return None
 
     index = self.__log.append(LogEntry(term=self.__current_term, command=command))
+    self.__advance_commit_index()
     self.__send_heartbeats()
     return index
 
@@ -389,22 +394,17 @@ class RaftNode(Generic[CommandT]):
     # remember to count yourself in the matched tally.
     previous_commit = self.__commit_index
 
-    # TODO 1: For each index from `self.__commit_index + 1` to
-    #         `self.__log.last_index()`, decide whether it is safe to
-    #         commit:
-    #
-    #   a. Skip the index if `self.__log.term_at(index)` differs from
-    #      `self.__current_term`. (The Figure-8 restriction.)
-    #
-    #   b. Count how many replicas have replicated this index:
-    #        - This leader counts as 1 (its own log already has it).
-    #        - For each peer in `self.__peers`, check
-    #          `self.__match_index.get(peer_id, 0) >= index`.
-    #
-    #   c. If the count reaches `self.__quorum_size()`, set
-    #      `self.__commit_index = index` and keep going (a higher
-    #      index may also satisfy the same condition).
-    raise NotImplementedError("TODO: implement __advance_commit_index per the steps above")
+    for index in range(self.__commit_index + 1, self.__log.last_index() + 1):
+      if self.__log.term_at(index) != self.__current_term:
+        continue
+
+      replicated_count = 1
+      for peer_id in self.__peers:
+        if self.__match_index.get(peer_id, 0) >= index:
+          replicated_count += 1
+
+      if replicated_count >= self.__quorum_size():
+        self.__commit_index = index
 
     if self.__commit_index != previous_commit:
       self.__raft_log(f"commit_index advanced from {previous_commit} to {self.__commit_index}")
@@ -426,17 +426,14 @@ class RaftNode(Generic[CommandT]):
     # `(command, raft_log_index)`. The callback may be None during
     # bootstrap; guard accordingly.
     #
-    # TODO: While `__last_applied < __commit_index`, advance
-    #       `__last_applied` by one and apply the entry at the new
-    #       `__last_applied`:
-    #         - Fetch via `self.__log.entry_at(self.__last_applied)`.
-    #         - If the entry exists and `self.__apply` is set, call
-    #           `self.__apply(entry.command, self.__last_applied)`.
-    #         - The `self.__raft_log(...)` line below shows what to
-    #           log when an entry is applied; you can keep or drop it.
-    raise NotImplementedError("TODO: implement __apply_committed per the steps above")
-    # Example log line (kept for reference, remove or move into your loop):
-    #   self.__raft_log(f"applying committed log entry at index={self.__last_applied}: {entry.command}")
+    while self.__last_applied < self.__commit_index:
+      self.__last_applied += 1
+      entry = self.__log.entry_at(self.__last_applied)
+      if entry is None or self.__apply is None:
+        continue
+
+      self.__raft_log(f"applying committed log entry at index={self.__last_applied}: {entry.command}")
+      self.__apply(entry.command, self.__last_applied)
 
   def __is_log_up_to_date(self, last_log_index: int, last_log_term: int) -> bool:
     # The "log up-to-date" check from RAFT Section 5.4.1. Used by
@@ -453,8 +450,13 @@ class RaftNode(Generic[CommandT]):
     # local values. Returns True iff the candidate's log is at least as
     # up-to-date as ours.
     #
-    # TODO: implement the two-case comparison above.
-    raise NotImplementedError("TODO: implement __is_log_up_to_date per the rule above")
+    local_last_term = self.__log.last_term()
+    local_last_index = self.__log.last_index()
+
+    if last_log_term != local_last_term:
+      return last_log_term > local_last_term
+
+    return last_log_index >= local_last_index
 
   def __become_candidate(self, term: int) -> None:
     self.__role = Role.CANDIDATE
@@ -491,8 +493,8 @@ class RaftNode(Generic[CommandT]):
     # it is 3, etc. `self.__peers` excludes this node, so the cluster
     # size is `len(self.__peers) + 1`.
     #
-    # TODO: return the majority threshold of the full cluster.
-    raise NotImplementedError("TODO: implement __quorum_size as a majority of the cluster")
+    cluster_size = len(self.__peers) + 1
+    return (cluster_size // 2) + 1
 
   def __new_election_timeout(self) -> int:
     low, high = self.__election_timeout_range_ms

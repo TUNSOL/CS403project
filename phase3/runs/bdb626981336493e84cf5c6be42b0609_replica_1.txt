@@ -1,0 +1,8 @@
+[TREE STATE]
+Replica 1, tree structure: wide, number of op messages: 3
+
+Local tree:
+{<tree_crdt.tree.node.Node object at 0x000001E07B727150>}
+
+Tree snapshot:
+{<tree_crdt.tree.node.Node object at 0x000001E07B727110>}

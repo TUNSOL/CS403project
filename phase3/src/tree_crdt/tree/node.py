@@ -26,6 +26,9 @@ class Node:
   
   def __str__(self) -> str:
     return f"Node(p={str(self.__p)},m={str(self.__m)},c={str(self.__c)})"
+
+  def __repr__(self) -> str:
+    return str(self)
   
   def __eq__(self, other) -> bool:
     if not isinstance(other, self.__class__):
