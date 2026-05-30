@@ -484,6 +484,11 @@ class Replica:
       incoming_offset = int(payload.get("log_offset", last_included_index))
       if incoming_offset < self.__log_offset:
         return
+      
+      # FIX: trim op-log entries that are now below the snapshot frontier
+      drop_count = incoming_offset - self.__log_offset
+      if drop_count > 0:
+          del self.__op_log[:drop_count]
 
       self.__tree_snapshot = snapshot
       self.__checkpoint_clock.set_timestamp(payload.get("checkpoint", {}))
