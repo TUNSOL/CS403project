@@ -333,21 +333,32 @@ class Replica:
     """Return the causal-stability threshold (min over peer timestamps)."""
     if isinstance(self.__clock.timestamp, int):
       if self.__num_replicas is not None:
-        values = [
-          self.__clock.timestamp if peer_id == self.__id else self.get_peer_timestamp(peer_id)
+        peer_ids = [
+          peer_id
           for peer_id in range(self.__num_replicas)
+          if peer_id != self.__id
         ]
+        if not peer_ids:
+          return 0
+        values = [self.get_peer_timestamp(peer_id) for peer_id in peer_ids]
       else:
         if not self.__last_timestamps:
           return 0
-        values = [self.__clock.timestamp, *self.__last_timestamps.values()]
+        values = list(self.__last_timestamps.values())
       return min(values) if values else 0
 
     local = self.__clock.timestamp
     replica_count = self.__num_replicas if self.__num_replicas is not None else len(local)
-    timestamps = []
-    for replica_id in range(replica_count):
-      timestamps.append(local if replica_id == self.__id else self.get_peer_timestamp(replica_id))
+    peer_ids = [
+      replica_id
+      for replica_id in range(replica_count)
+      if replica_id != self.__id
+    ]
+
+    if not peer_ids:
+      return {key: 0 for key in local}
+
+    timestamps = [self.get_peer_timestamp(replica_id) for replica_id in peer_ids]
 
     return {
       key: min(timestamp.get(key, 0) for timestamp in timestamps if isinstance(timestamp, dict))

@@ -1,0 +1,4 @@
+[TREE STATE]
+Replica 1, tree structure: wide, maximum timestamp: 2
+[frozenset({Node(i=1,t={0: 7, 1: 9},p=None,m={'count': 3, 'config': 'random_delete', 'replica': 1, 'status': 'deleted', 'applied': True},c=0)}),
+ frozenset({Node(i=1,t={0: 4, 1: 6},p=None,m={'count': 2, 'config': 'random_delete', 'replica': 1, 'status': 'deleted', 'applied': True},c=1)})]
